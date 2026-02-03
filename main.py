@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 VALID_SESSIONS = {"Habituation 1", "Habituation 2", "Habituation 3", "Sample", "Choice"}
@@ -54,9 +56,67 @@ def process_session(csv_path: Path) -> SessionResult:
     )
 
 
+def plot_results(
+    session_type: Literal["Habituation", "Sample", "Choice"],
+    results: list[SessionResult],
+) -> None:
+    rows = []
+
+    divisor = {"Habituation": 20 * 60, "Sample": 8 * 60, "Choice": 3 * 60}
+
+    for result in results:
+        for pos in ["a", "b", "c"]:
+            rows.append(
+                {
+                    "subject": result.animal_id,  # ID to connect dots
+                    "position": pos,
+                    "time": result.time_investigating[pos]
+                    / divisor[session_type]
+                    * 100,
+                }
+            )
+
+    print(session_type)
+    print(divisor[session_type])
+
+    df = pd.DataFrame(rows)
+    # Average across all the same positions
+    df = df.groupby(["subject", "position"], as_index=False).mean()
+    fig, ax = plt.subplots()
+
+    sns.barplot(
+        data=df, x="position", y="time", color="lightgray", ax=ax, errorbar=None
+    )
+
+    sns.stripplot(data=df, x="position", y="time", color="black", ax=ax, jitter=False)
+
+    sns.lineplot(
+        data=df,
+        x="position",
+        y="time",
+        units="subject",
+        estimator=None,
+        color="black",
+        alpha=0.4,
+        ax=ax,
+    )
+
+    ax.set_title(session_type)
+    ax.set_ylabel("Time Investigating (% total)")
+    ax.set_xlabel("Object position")
+    plt.ylim(0, 7)
+
+
 def main(csv_path: Path) -> None:
 
     all_sessions = [process_session(p) for p in csv_path.glob("*.csv")]
+
+    for session_plot in ["Habituation", "Sample", "Choice"]:
+        plot_results(
+            session_plot,
+            [s for s in all_sessions if s.session_type.startswith(session_plot)],
+        )
+    plt.show()
 
 
 if __name__ == "__main__":
