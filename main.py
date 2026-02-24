@@ -16,6 +16,7 @@ class SessionResult:
     animal_id: str
     session_type: str
     time_investigating: dict[str, float]
+    number_of_investigations: dict[str, int]
 
 
 def string_to_ms(time_str: str) -> int:
@@ -32,7 +33,8 @@ def process_session(csv_path: Path) -> SessionResult:
     # Bit tricky to get the session type and the animal ID due to variable spaces
     # this depends on the animal being called "N0XX"
     info = csv_path.stem.split(" ")
-    id_position = next(i for i, s in enumerate(info) if s.startswith("N0"))
+    # id_position = next(i for i, s in enumerate(info) if s.startswith("N0"))
+    id_position = 7
     animal_id = info[id_position]
     session_type = " ".join(info[id_position + 1 :])
     assert session_type in VALID_SESSIONS, f"Unknown session type: {session_type}"
@@ -41,6 +43,7 @@ def process_session(csv_path: Path) -> SessionResult:
     df["dt"] = df.time_int.diff().fillna(0)
 
     time_investigating = {}
+    number_of_investigations = {}
 
     for position in ["a", "b", "c"]:
 
@@ -48,11 +51,16 @@ def process_session(csv_path: Path) -> SessionResult:
             df.loc[df[f"investigating object position {position}"] == 1, "dt"].sum()
             / 1000
         )
+        # Count the number of times the mouse started investigating this position
+        number_of_investigations[position] = (
+            df[f"investigating object position {position}"].diff() == 1
+        ).sum()
 
     return SessionResult(
         animal_id=animal_id,
         session_type=session_type,
         time_investigating=time_investigating,
+        number_of_investigations=number_of_investigations,
     )
 
 
@@ -120,4 +128,5 @@ def main(csv_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path("/Volumes/MarcBusche/James/novel_object/2026-01-30"))
+    path = Path("/Volumes/MarcBusche/Suraya/Behaviour/novel_object/2026-02-24")
+    main(path)
