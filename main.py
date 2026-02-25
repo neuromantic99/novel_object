@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -7,43 +6,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-VALID_SESSIONS = {"Habituation 1", "Habituation 2", "Habituation 3", "Sample", "Choice"}
-
-
-@dataclass
-class SessionResult:
-    animal_id: str
-    session_type: str
-    time_investigating: dict[str, float]
-    number_of_investigations: dict[str, int]
-
-
-def string_to_ms(time_str: str) -> int:
-    """converts a string like this '0:00:00.172' to milliseconds as int"""
-    h, m, s = time_str.split(":")
-    s, ms = s.split(".")
-    return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(ms)
+from consts import SESSION_LENGTHS, VALID_SESSIONS
+from models import MouseResult, SessionResult, PathStore
+from utils import animal_id_and_session_type_from_filename, string_to_ms
 
 
 def process_session(csv_path: Path) -> SessionResult:
     df = pd.read_csv(csv_path)
     df.columns = map(str.lower, df.columns)
-
-    # Bit tricky to get the session type and the mouse id, need to parse the file name
-    # think I've caught any potential errors with the assertions but keep and eye on it
-    info = csv_path.stem.split(" ")
-    idx_session_type = next(
-        i
-        for i, s in enumerate(info)
-        if s.lower() in ["habituation", "sample", "choice"]
-    )
-    animal_id = info[idx_session_type - 1]
-    assert (
-        animal_id[0] == "0" or animal_id[0] == "N"
-    ), f"Animal ID should start with 0 for surayas or N for Jimmys, got {animal_id}"
-    session_type = " ".join(info[idx_session_type:])
-    assert session_type in VALID_SESSIONS, f"Unknown session type: {session_type}"
 
     df["time_int"] = df.time.apply(string_to_ms)
     df["dt"] = df.time_int.diff().fillna(0)
@@ -62,6 +32,7 @@ def process_session(csv_path: Path) -> SessionResult:
             df[f"investigating object position {position}"].diff() == 1
         ).sum()
 
+    animal_id, session_type = animal_id_and_session_type_from_filename(csv_path)
     return SessionResult(
         animal_id=animal_id,
         session_type=session_type,
@@ -76,8 +47,6 @@ def plot_results(
 ) -> None:
     rows = []
 
-    divisor = {"Habituation": 20 * 60, "Sample": 8 * 60, "Choice": 3 * 60}
-
     for result in results:
         for pos in ["a", "b", "c"]:
             rows.append(
@@ -85,13 +54,10 @@ def plot_results(
                     "subject": result.animal_id,  # ID to connect dots
                     "position": pos,
                     "time": result.time_investigating[pos]
-                    / divisor[session_type]
+                    / SESSION_LENGTHS[session_type]
                     * 100,
                 }
             )
-
-    print(session_type)
-    print(divisor[session_type])
 
     df = pd.DataFrame(rows)
     # Average across all the same positions
@@ -121,18 +87,96 @@ def plot_results(
     plt.ylim(0, 7)
 
 
-def main(csv_path: Path) -> None:
+def main() -> None:
 
-    all_sessions = [process_session(p) for p in csv_path.glob("*.csv")]
+    path_stores = build_csv_dict()
 
-    for session_plot in ("Habituation", "Sample", "Choice"):
-        plot_results(
-            session_plot,
-            [s for s in all_sessions if s.session_type.startswith(session_plot)],
+    results: list[MouseResult] = []
+    for path_store in path_stores:
+        if path_store.animal_id in ["N001", "N002", "N003"]:
+            print(
+                f"Skipping {path_store.animal_id} as they are the confounded pilot mice"
+            )
+            continue
+        results.append(
+            MouseResult(
+                animal_id=path_store.animal_id,
+                habituation_1=process_session(path_store.habituation_1),
+                habituation_2=process_session(path_store.habituation_2),
+                habituation_3=process_session(path_store.habituation_3),
+                sample=process_session(path_store.sample),
+                choice=process_session(path_store.choice),
+            )
         )
+
+    plot_results(
+        session_type="Habituation",
+        results=[
+            getattr(result, f"habituation_{i}") for result in results for i in [1, 2, 3]
+        ],
+    )
+    plot_results(session_type="Sample", results=[result.sample for result in results])
+    plot_results(session_type="Choice", results=[result.choice for result in results])
+
     plt.show()
 
 
+def parse_list_of_csvs(csvs: list[Path]) -> list[PathStore]:
+    """Check that all mice have the expected sessions"""
+    store = {}
+    for csv in csvs:
+        animal_id, session_type = animal_id_and_session_type_from_filename(csv)
+        # Deal with N012 and N013 later
+        if animal_id in ["N001", "N002", "N003", "N012", "N013"]:
+            continue
+        if animal_id not in store:
+            store[animal_id] = PathStore(animal_id=animal_id)
+
+        setattr(store[animal_id], session_type.lower().replace(" ", "_"), csv)
+
+    path_stores = list(store.values())
+    for path_store in path_stores:
+        for key in [
+            "habituation_1",
+            "habituation_2",
+            "habituation_3",
+            "sample",
+            "choice",
+        ]:
+            assert (
+                getattr(path_store, key) is not None
+            ), f"Missing {key} for {path_store.animal_id}"
+            assert getattr(
+                path_store, key
+            ).exists(), f"File {getattr(path_store, key)} does not exist for {path_store.animal_id}"
+            assert animal_id_and_session_type_from_filename(
+                getattr(path_store, key)
+            ) == (
+                path_store.animal_id,
+                key.replace("_", " ").title(),
+            ), f"File {getattr(path_store, key)} does not match expected animal id and session type for {path_store.animal_id}"
+
+    return path_stores
+
+
+def build_csv_dict() -> list[PathStore]:
+
+    suraya_parent = Path("/Volumes/MarcBusche/Suraya/Behaviour/novel_object/")
+    jim_parent = Path("/Volumes/MarcBusche/James/novel_object")
+
+    final_day_folders = [
+        suraya_parent / "2026-02-24",
+        jim_parent / "2026-02-20",
+        jim_parent / "2026-02-06",
+        jim_parent / "2026-01-30",
+    ]
+
+    csvs = []
+    for folder in final_day_folders:
+        csvs.extend(folder.glob("*.csv"))
+
+    return parse_list_of_csvs(csvs)
+
+
 if __name__ == "__main__":
-    path = Path("/Volumes/MarcBusche/Suraya/Behaviour/novel_object/2026-02-24")
-    main(path)
+    main()
