@@ -30,13 +30,19 @@ def process_session(csv_path: Path) -> SessionResult:
     df = pd.read_csv(csv_path)
     df.columns = map(str.lower, df.columns)
 
-    # Bit tricky to get the session type and the animal ID due to variable spaces
-    # this depends on the animal being called "N0XX"
+    # Bit tricky to get the session type and the mouse id, need to parse the file name
+    # think I've caught any potential errors with the assertions but keep and eye on it
     info = csv_path.stem.split(" ")
-    # id_position = next(i for i, s in enumerate(info) if s.startswith("N0"))
-    id_position = 7
-    animal_id = info[id_position]
-    session_type = " ".join(info[id_position + 1 :])
+    idx_session_type = next(
+        i
+        for i, s in enumerate(info)
+        if s.lower() in ["habituation", "sample", "choice"]
+    )
+    animal_id = info[idx_session_type - 1]
+    assert (
+        animal_id[0] == "0" or animal_id[0] == "N"
+    ), f"Animal ID should start with 0 for surayas or N for Jimmys, got {animal_id}"
+    session_type = " ".join(info[idx_session_type:])
     assert session_type in VALID_SESSIONS, f"Unknown session type: {session_type}"
 
     df["time_int"] = df.time.apply(string_to_ms)
@@ -119,7 +125,7 @@ def main(csv_path: Path) -> None:
 
     all_sessions = [process_session(p) for p in csv_path.glob("*.csv")]
 
-    for session_plot in ["Habituation", "Sample", "Choice"]:
+    for session_plot in ("Habituation", "Sample", "Choice"):
         plot_results(
             session_plot,
             [s for s in all_sessions if s.session_type.startswith(session_plot)],
