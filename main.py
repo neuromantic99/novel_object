@@ -41,7 +41,68 @@ def process_session(csv_path: Path) -> SessionResult:
     )
 
 
-def plot_results(
+def get_novel_and_familiar_positions(session_type: str) -> tuple[str, str]:
+    match session_type:
+        case "Habituation" | "Habituation 1" | "Habituation 2" | "Habituation 3":
+            novel = "c"
+            familiar = "b"
+        case "Sample":
+            novel = "a"
+            familiar = "b"
+        case "Choice":
+            novel = "c"
+            familiar = "b"
+        case _:
+            raise ValueError(f"Unknown session type: {session_type}")
+
+    return novel, familiar
+
+
+def compute_discrimination_index(result: SessionResult) -> float:
+    novel, familiar = get_novel_and_familiar_positions(result.session_type)
+    return (result.time_investigating[novel] - result.time_investigating[familiar]) / (
+        result.time_investigating[novel] + result.time_investigating[familiar]
+    )
+
+
+def plot_discrimination_index(
+    mouse_results: list[MouseResult],
+) -> None:
+
+    discimination_indexes = {"Habituation": [], "Sample": [], "Choice": []}
+    for mouse_result in mouse_results:
+        discimination_indexes["Habituation"].append(
+            np.mean(
+                [
+                    compute_discrimination_index(mouse_result.habituation_1),
+                    compute_discrimination_index(mouse_result.habituation_2),
+                    compute_discrimination_index(mouse_result.habituation_3),
+                ]
+            )
+        )
+        discimination_indexes["Sample"].append(
+            compute_discrimination_index(mouse_result.sample)
+        )
+        discimination_indexes["Choice"].append(
+            compute_discrimination_index(mouse_result.choice)
+        )
+
+    sns.barplot(
+        data=pd.DataFrame(discimination_indexes),
+        color="lightgray",
+        errorbar=None,
+        # errorbar="sd",
+    )
+    sns.stripplot(
+        data=pd.DataFrame(discimination_indexes),
+        color="black",
+        jitter=False,
+    )
+    plt.title("Discrimination Index")
+    plt.axhline(0, color="black")
+
+
+def plot_results_all_positions(
     session_type: Literal["Habituation", "Sample", "Choice"],
     results: list[SessionResult],
 ) -> None:
@@ -62,6 +123,7 @@ def plot_results(
     df = pd.DataFrame(rows)
     # Average across all the same positions
     df = df.groupby(["subject", "position"], as_index=False).mean()
+
     fig, ax = plt.subplots()
 
     sns.barplot(
@@ -109,14 +171,19 @@ def main() -> None:
             )
         )
 
-    plot_results(
-        session_type="Habituation",
-        results=[
-            getattr(result, f"habituation_{i}") for result in results for i in [1, 2, 3]
-        ],
-    )
-    plot_results(session_type="Sample", results=[result.sample for result in results])
-    plot_results(session_type="Choice", results=[result.choice for result in results])
+    plot_discrimination_index(results)
+    # plot_results_all_positions(
+    #     session_type="Habituation",
+    #     results=[
+    #         getattr(result, f"habituation_{i}") for result in results for i in [1, 2, 3]
+    #     ],
+    # )
+    # plot_results_all_positions(
+    #     session_type="Sample", results=[result.sample for result in results]
+    # )
+    # plot_results_all_positions(
+    #     session_type="Choice", results=[result.choice for result in results]
+    # )
 
     plt.show()
 
